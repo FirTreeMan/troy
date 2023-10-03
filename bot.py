@@ -51,16 +51,24 @@ async def make(ctx, verb: str = "spit yo shit", obj: str = "Troy", subj: str = "
     imgsurf = image.load('cleantroy.png')
     surf = Surface(imgsurf.get_size(), pygame.SRCALPHA)
     surf.blit(imgsurf, (0, 0))
-    verbrect = Rect(36, -10, 336, 93)
-    objrect = Rect(385, -10, 140, 93)
-    subjrect = Rect(252, 85, 140, 93)
+    verbrect = Rect(-2, -10, 363, 93)
+    objrect = Rect(375, -10, 160, 93)
+    subjrect = Rect(52, 85, 340, 93)
 
     drawtext(surf, verb, verbrect, align=FONT_CENTER)
     drawtext(surf, obj, objrect, align=FONT_LEFT)
     drawtext(surf, subj, subjrect, align=FONT_RIGHT)
+    # pygame.draw.rect(surf, (255, 0, 0), verbrect, 2)
+    # pygame.draw.rect(surf, (255, 0, 0), objrect, 2)
+    # pygame.draw.rect(surf, (255, 0, 0), subjrect, 2)
     image.save(surf, 'make.png')
 
     await ctx.channel.send(file=discord.File('make.png'))
+
+
+@bot.command(name='stop', help='asks it to stop')
+async def stop(ctx):
+    await ctx.channel.send("kys loser XD")
 
 
 bot.run(TOKEN)
