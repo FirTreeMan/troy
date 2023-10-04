@@ -1,4 +1,6 @@
 import os
+import random
+
 import discord
 import pygame
 from dotenv import load_dotenv
@@ -11,6 +13,11 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD = os.getenv('DISCORD_GUILD')
 FONT = "Futura Condensed Extra Bold.otf"
+STOPQUOTES = ("kys loser XD", "no thanks", "shut up nerd", "debes matarte ahora",
+              "why dont yuo touch some controller...", "i'll stop when i've had enough", "no",
+              "moderators, please hunt this man down and shoot him", "SHUT UP!!", "nop", "no quiero",
+              "don't even talk to me", "en español por favor", "erm, loser alert", "how about i shut you up instead",
+              "get out of here you fricking slur", "no hablo inglés", "never!! hahahaha", "why is every1 so mean 2 me")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -68,7 +75,7 @@ async def make(ctx, verb: str = "spit yo shit", obj: str = "Troy", subj: str = "
 
 @bot.command(name='stop', help='asks it to stop')
 async def stop(ctx):
-    await ctx.channel.send("kys loser XD")
+    await ctx.channel.send(random.choice(STOPQUOTES))
 
 
 bot.run(TOKEN)
