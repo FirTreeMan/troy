@@ -1,8 +1,10 @@
+import io
 import os
 import random
 
 import discord
 import pygame
+import requests
 from dotenv import load_dotenv
 from discord.ext import commands
 from pygame import Surface, display, image, Rect, font, FONT_LEFT, FONT_RIGHT, FONT_CENTER
@@ -13,20 +15,22 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD = os.getenv('DISCORD_GUILD')
 FONT = "Futura Condensed Extra Bold.otf"
-STOPQUOTES = ("kys loser XD", "no thanks", "shut up nerd", "debes matarte ahora",
-              "why dont yuo touch some controller...", "i'll stop when i've had enough", "no",
-              "moderators, please hunt this man down and shoot him", "SHUT UP!!", "nop", "no quiero",
-              "don't even talk to me", "en español por favor", "erm, loser alert", "how about i shut you up instead",
-              "get out of here you fricking slur", "no hablo inglés", "never!! hahahaha", "why is every1 so mean 2 me")
+KFONT = "gg sans Medium.woff"
+with open('stop.txt', 'r') as file:
+    STOPQUOTES = tuple(file.readlines())
+with open('kill.txt', 'r') as file:
+    KILLQUOTES = tuple(file.readlines())
+DISCORDBG = (49, 51, 56)
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(command_prefix="troy please ", intents=intents)
 
 
-def drawtext(surface: Surface, text, rect: Rect,
-             color=(0, 0, 0), fontname=FONT, fontsize=80, aa=True, bkg=(255, 255, 255), align=FONT_LEFT):
+def drawtext(surface: Surface, text, rect: Rect, color=(0, 0, 0), fontname=FONT, fontsize=80, aa=True,
+             bkg=(255, 255, 255), align=FONT_LEFT):
     usedfont = font.Font(fontname, fontsize)
     usedfont.align = align
 
@@ -76,6 +80,43 @@ async def make(ctx, verb: str = "spit yo shit", obj: str = "Troy", subj: str = "
 @bot.command(name='stop', help='asks it to stop')
 async def stop(ctx):
     await ctx.channel.send(random.choice(STOPQUOTES))
+
+
+@bot.command(name='kill', help='something devious')
+async def kill(ctx, user: discord.User = None):
+    member = ctx.message.guild.get_member(user.id) if user else ctx.message.guild.get_member(int(ctx.message.author.id))
+
+    text = random.choice(KILLQUOTES).replace("\\n", "\n")
+    textbox = font.Font(KFONT, 48).render(text + "\n", antialias=True, color=(255, 255, 255), bgcolor=DISCORDBG,
+                                          wraplength=2490)
+    pfpbase = pygame.transform.scale(pygame.image.load(io.BytesIO(requests.get(member.avatar.with_size(512)).content),
+                                                       namehint=""), (120, 120))
+    pfp = pygame.Surface(pfpbase.get_size(), pygame.SRCALPHA)
+    pygame.draw.ellipse(pfp, (255, 255, 255, 255), (0, 0, *pfpbase.get_size()))
+    pfp.blit(pfpbase, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+    name = member.nick if member.nick else member.name
+    rolecolor = member.color.to_rgb()
+    namebox = font.Font(KFONT, 48).render(name, antialias=True, color=rolecolor, bgcolor=DISCORDBG,
+                                          wraplength=2490)
+    time = (f"{random.randint(1, 12):02}/{random.randint(1, 30):02}/{random.randint(2020, 2023):04} "
+            f"{random.randint(1, 12)}:{random.randint(1, 59):02} {random.choice(['AM', 'PM'])}")
+    timebox = font.Font(KFONT, 36).render(time, antialias=True, color=(148, 155, 164), bgcolor=DISCORDBG,
+                                          wraplength=2490)
+
+    surf = pygame.Surface((6 + pfp.get_width() + 33 + textbox.get_width(),
+                           6 + namebox.get_height() + textbox.get_height()))
+    surf.fill(DISCORDBG)
+    surf.blit(pfp, (6, 6))
+    surf.blit(namebox, (6 + pfp.get_width() + 33, 6))
+    surf.blit(timebox, (6 + pfp.get_width() + 33 + namebox.get_width() + 18, 6 + 12))
+    surf.blit(textbox, (surf.get_width() - textbox.get_width(), surf.get_height() - textbox.get_height()))
+    # pygame.draw.rect(surf, (255, 0, 0), pfp.get_rect(), 2)
+    # pygame.draw.rect(surf, (255, 0, 0), namebox.get_rect(), 2)
+    # pygame.draw.rect(surf, (255, 0, 0), textbox.get_rect(), 2)
+
+    image.save(surf, 'kill.png')
+
+    await ctx.channel.send(file=discord.File('kill.png'))
 
 
 bot.run(TOKEN)
