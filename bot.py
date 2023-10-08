@@ -21,6 +21,9 @@ with open('stop.txt', 'r') as file:
 with open('kill.txt', 'r') as file:
     KILLQUOTES = tuple(file.readlines())
 DISCORDBG = (49, 51, 56)
+open('loser.txt', 'a+').close()
+with open('losers.txt', 'r') as file:
+    losers = [s.rstrip('\n') for s in file.readlines()]
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -84,6 +87,10 @@ async def stop(ctx):
 
 @bot.command(name='kill', help='something devious')
 async def kill(ctx, user: discord.User = None):
+    if user and user.id in (698596771059728455, 1127648163747086407):
+        await ctx.channel.send("no thanks sweaty")
+        return
+
     member = ctx.message.guild.get_member(user.id) if user else ctx.message.guild.get_member(int(ctx.message.author.id))
 
     text = random.choice(KILLQUOTES).replace("\\n", "\n")
@@ -94,12 +101,14 @@ async def kill(ctx, user: discord.User = None):
     pfp = pygame.Surface(pfpbase.get_size(), pygame.SRCALPHA)
     pygame.draw.ellipse(pfp, (255, 255, 255, 255), (0, 0, *pfpbase.get_size()))
     pfp.blit(pfpbase, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
-    name = member.nick if member.nick else member.name
+    name = member.display_name
     rolecolor = member.color.to_rgb()
     namebox = font.Font(KFONT, 48).render(name, antialias=True, color=rolecolor, bgcolor=DISCORDBG,
                                           wraplength=2490)
     time = (f"{random.randint(1, 12):02}/{random.randint(1, 30):02}/{random.randint(2020, 2023):04} "
             f"{random.randint(1, 12)}:{random.randint(1, 59):02} {random.choice(['AM', 'PM'])}")
+    if str(ctx.message.guild.id) in losers:
+        time = "11/14/1987 4:12 PM"
     timebox = font.Font(KFONT, 36).render(time, antialias=True, color=(148, 155, 164), bgcolor=DISCORDBG,
                                           wraplength=2490)
 
@@ -117,6 +126,23 @@ async def kill(ctx, user: discord.User = None):
     image.save(surf, 'kill.png')
 
     await ctx.channel.send(file=discord.File('kill.png'))
+
+
+@bot.command(name='censor', help='for admins to make him less egregious')
+async def censor(ctx):
+    global losers
+
+    if ctx.message.author.guild_permissions.manage_messages:
+        if (guildid := str(ctx.message.guild.id)) in losers:
+            losers.remove(guildid)
+            await ctx.channel.send("this server is no longer in the stinky pile")
+        else:
+            losers.append(guildid)
+            await ctx.channel.send("activated dumb loser mode")
+        with open('losers.txt', 'w') as f:
+            f.writelines([s + "\n" for s in losers])
+    else:
+        await ctx.channel.send("you aren't a moderator silly")
 
 
 bot.run(TOKEN)
