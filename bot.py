@@ -1,13 +1,13 @@
-import io
-import os
-import random
-
 import discord
 import pygame
 import requests
 from dotenv import load_dotenv
 from discord.ext import commands
 from pygame import Surface, display, image, Rect, font, FONT_LEFT, FONT_RIGHT, FONT_CENTER
+from datetime import timedelta
+import io
+import os
+import random
 
 font.init()
 display.init()
@@ -21,7 +21,8 @@ with open('stop.txt', 'r') as file:
 with open('kill.txt', 'r') as file:
     KILLQUOTES = tuple(file.readlines())
 DISCORDBG = (49, 51, 56)
-open('loser.txt', 'a+').close()
+STRANGLERANGE = [1, 6]
+open('losers.txt', 'a+').close()
 with open('losers.txt', 'r') as file:
     losers = [s.rstrip('\n') for s in file.readlines()]
 
@@ -53,6 +54,11 @@ def drawtext(surface: Surface, text, rect: Rect, color=(0, 0, 0), fontname=FONT,
 @bot.event
 async def on_ready():
     print(f'{bot.user.name} on')
+
+
+@bot.before_invoke
+async def common(message):
+    print(f"{message.guild.get_member(message.author.id).display_name: <25}{message.guild.name: <25}{message.content}")
 
 
 @bot.command(name='live', help='checks for vitals')
@@ -109,7 +115,7 @@ async def kill(ctx, user: discord.User = None):
             f"{random.randint(1, 12)}:{random.randint(1, 59):02} {random.choice(['AM', 'PM'])}")
     if str(ctx.message.guild.id) in losers:
         time = "11/14/1987 4:12 PM"
-    timebox = font.Font(KFONT, 36).render(time, antialias=True, color=(148, 155, 164), bgcolor=DISCORDBG,
+    timebox = font.Font(KFONT, 32).render(time, antialias=True, color=(148, 155, 164), bgcolor=DISCORDBG,
                                           wraplength=2490)
 
     surf = pygame.Surface((6 + pfp.get_width() + 33 + textbox.get_width(),
@@ -117,7 +123,7 @@ async def kill(ctx, user: discord.User = None):
     surf.fill(DISCORDBG)
     surf.blit(pfp, (6, 6))
     surf.blit(namebox, (6 + pfp.get_width() + 33, 6))
-    surf.blit(timebox, (6 + pfp.get_width() + 33 + namebox.get_width() + 18, 6 + 12))
+    surf.blit(timebox, (6 + pfp.get_width() + 33 + namebox.get_width() + 18, 6 + 16))
     surf.blit(textbox, (surf.get_width() - textbox.get_width(), surf.get_height() - textbox.get_height()))
     # pygame.draw.rect(surf, (255, 0, 0), pfp.get_rect(), 2)
     # pygame.draw.rect(surf, (255, 0, 0), namebox.get_rect(), 2)
@@ -143,6 +149,29 @@ async def censor(ctx):
             f.writelines([s + "\n" for s in losers])
     else:
         await ctx.channel.send("you aren't a moderator silly")
+
+
+@bot.command(name='strangle', help='choke someone (and yourself)')
+async def strangle(ctx):
+    # await ctx.channel.send(len([s for s in ctx.message.guild.members
+    #                             if ctx.message.guild.me.top_role > s.top_role]))
+    if str(ctx.message.guild.id) in losers:
+        await ctx.channel.send("mods wont let me (1984 anyone?)")
+        return
+    me = ctx.message.guild.me
+    instigator = ctx.message.author
+    victimchoices = [s for s in ctx.message.guild.members if ctx.message.guild.me.top_role > s.top_role]
+    if me.top_role <= instigator.top_role:
+        await ctx.channel.send("you are too powerful... admin abuse...")
+        return
+    if not victimchoices:
+        await ctx.channel.send("there is nobody here to exert my power over...")
+        return
+    victim = random.choice(victimchoices)
+    duration = timedelta(seconds=random.randrange(*STRANGLERANGE))
+    await victim.timeout(duration, reason=f'strangled on behalf of {instigator.mention}')
+    await instigator.timeout(duration, reason=f'wanted to strangle')
+    await ctx.channel.send(f"strangled you and {victim.mention}")
 
 
 bot.run(TOKEN)
