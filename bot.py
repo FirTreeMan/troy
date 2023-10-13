@@ -21,7 +21,8 @@ with open('stop.txt', 'r') as file:
 with open('kill.txt', 'r') as file:
     KILLQUOTES = tuple(file.readlines())
 DISCORDBG = (49, 51, 56)
-STRANGLERANGE = [1, 6]
+STRANGLERANGE = [5, 300]
+STRANGLEMULT = 3
 open('losers.txt', 'a+').close()
 with open('losers.txt', 'r') as file:
     losers = [s.rstrip('\n') for s in file.readlines()]
@@ -54,11 +55,14 @@ def drawtext(surface: Surface, text, rect: Rect, color=(0, 0, 0), fontname=FONT,
 @bot.event
 async def on_ready():
     print(f'{bot.user.name} on')
+    print(f"{'name': <30}{'server': <30}{'message'}")
+    print("-" * 120)
 
 
 @bot.before_invoke
-async def common(message):
-    print(f"{message.guild.get_member(message.author.id).display_name: <25}{message.guild.name: <25}{message.content}")
+async def common(ctx):
+    message = ctx.message
+    print(f"{message.guild.get_member(message.author.id).display_name: <30}{message.guild.name: <30}{message.content}")
 
 
 @bot.command(name='live', help='checks for vitals')
@@ -170,7 +174,7 @@ async def strangle(ctx):
     victim = random.choice(victimchoices)
     duration = timedelta(seconds=random.randrange(*STRANGLERANGE))
     await victim.timeout(duration, reason=f'strangled on behalf of {instigator.mention}')
-    await instigator.timeout(duration, reason=f'wanted to strangle')
+    await instigator.timeout(duration * STRANGLEMULT, reason=f'wanted to strangle')
     await ctx.channel.send(f"strangled you and {victim.mention}")
 
 
