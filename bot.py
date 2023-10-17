@@ -70,17 +70,37 @@ def surfsequal(surf1: Surface, surf2: Surface):
 
 
 async def send(ctx, *args, **kwargs):
-    if catspam.get(ctx.message.author.id, 0) // 5 >= CATMAX:
+    if catspam.get(ctx.message.author.id, 0) // 2 >= CATMAX:
         item = discord.File("cat/" + random.choice(os.listdir('cat')))
-        if val := kwargs.get('file', None):
-            if isinstance(val, list):
-                kwargs['file'] = val.append(item)
-            else:
-                kwargs['file'] = [val, item]
-        else:
-            kwargs['file'] = val
+        additions = [item]
+        if kwargs.get('file', None):
+            additions.insert(kwargs.pop('file'), 0)
+        kwargs['files'] = kwargs.get('files', []) + additions
 
     await ctx.channel.send(*args, **kwargs)
+
+
+async def log(ctx, *extra):
+    message = ctx.message
+    print(f"{str(datetime.datetime.now()): <40}{message.guild.get_member(message.author.id).display_name: <30}"
+          f"{message.guild.name: <30}{message.content: <80}", end="")
+    print(*extra)
+
+
+def shared_cooldown(rate, per, cooltype=commands.BucketType.default):
+    cd = commands.Cooldown(rate, per)
+
+    def decorator(func):
+        if isinstance(func, commands.Command):
+            func._buckets = commands.CooldownMapping(cd, cooltype)
+        else:
+            func.__commands_cooldown__ = cd
+        return func
+
+    return decorator
+
+
+cooldown = shared_cooldown(1, 1, commands.BucketType.user)
 
 
 @bot.event
@@ -88,7 +108,7 @@ async def on_ready():
     print(f'{bot.user.name} on')
     print()
     print(f"{'date': <40}{'name': <30}{'server': <30}{'message': <80}{'extra': <80}")
-    print("-" * 260, end="")
+    print("-" * 260)
 
 
 @bot.event
@@ -108,25 +128,24 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
+# noinspection PyUnusedLocal
 @bot.before_invoke
 async def start(ctx):
     global currmonth
 
-    message = ctx.message
-    print()
-    print(f"{str(datetime.datetime.now()): <40}{message.guild.get_member(message.author.id).display_name: <30}"
-          f"{message.guild.name: <30}{message.content: <80}", end="")
     if currmonth != (newmonth := datetime.datetime.now().month):
         currmonth = newmonth
         stranglespam.clear()
         catspam.clear()
 
 
+@cooldown
 @bot.command(name='live', help='checks for vitals')
 async def live(ctx):
     await send(ctx, "iphone venezuela bottom texxt 100 billion dead")
 
 
+@cooldown
 @bot.command(name='make', help='prints a fresh troy')
 async def make(ctx, verb: str = "spit yo shit", obj: str = "Troy", subj: str = "Troy"):
     imgsurf = image.load('cleantroy.png')
@@ -145,20 +164,22 @@ async def make(ctx, verb: str = "spit yo shit", obj: str = "Troy", subj: str = "
     image.save(surf, 'make.png')
 
     await send(ctx, file=discord.File('make.png'))
-    print('|'.join([verb, obj, subj]), end="")
+    await log(ctx, '|'.join([verb, obj, subj]))
 
 
+@cooldown
 @bot.command(name='stop', help='asks it to stop')
 async def stop(ctx):
     await send(ctx, quote := random.choice(STOPQUOTES))
-    print(quote, end="")
+    await log(ctx, quote)
 
 
+@cooldown
 @bot.command(name='kill', help='something devious')
 async def kill(ctx, user: discord.User = None):
     if user and user.id in (698596771059728455, 1127648163747086407):
         await send(ctx, "no thanks sweaty")
-        print("invalid victim")
+        await log(ctx, "invalid victim")
         return
 
     member = ctx.message.guild.get_member(user.id) if user else ctx.message.guild.get_member(int(ctx.message.author.id))
@@ -197,37 +218,39 @@ async def kill(ctx, user: discord.User = None):
     image.save(surf, 'kill.png')
 
     await send(ctx, file=discord.File('kill.png'))
-    print(quote[:30] + "...", end="")
+    await log(ctx, quote[:30] + "...")
 
 
+@cooldown
 @bot.command(name='censor', help='for admins to reduce mischief')
 async def censor(ctx):
     global losers
 
     if not ctx.message.author.guild_permissions.manage_messages:
         await send(ctx, "you aren't a moderator silly")
-        print("not a moderator", end="")
+        await log(ctx, "not a moderator")
         return
 
     if (guildid := str(ctx.message.guild.id)) in losers:
         losers.remove(guildid)
         await send(ctx, "this server is no longer in the stinky pile")
-        print("server uncensored", end="")
+        await log(ctx, "server uncensored")
     else:
         losers.append(guildid)
         await send(ctx, "activated dumb loser mode")
-        print("server censored", end="")
+        await log(ctx, "server censored")
     with open('losers.txt', 'w') as f:
         f.writelines([s + "\n" for s in losers])
 
 
+@cooldown
 @bot.command(name='strangle', help='choke someone (and yourself)')
 async def strangle(ctx):
     # await send(ctx, len([s for s in ctx.message.guild.members
     #                             if ctx.message.guild.me.top_role > s.top_role]))
     if str(ctx.message.guild.id) in losers:
         await send(ctx, "mods wont let me (1984 anyone?)")
-        print("command censored", end="")
+        await log(ctx, "command censored")
         return
     me = ctx.message.guild.me
     instigator = ctx.message.author
@@ -235,11 +258,11 @@ async def strangle(ctx):
     stranglespam[instigator.id] = stranglespam.get(instigator.id, 0) + 1
     if me.top_role <= instigator.top_role:
         await send(ctx, "you are too powerful... admin abuse...")
-        print("instigator has higher role", end="")
+        await log(ctx, "instigator has higher role")
         return
     if not victimchoices:
         await send(ctx, "there is nobody feeble enough here...")
-        print("no valid victims", end="")
+        await log(ctx, "no valid victims")
         return
     victim = random.choice(victimchoices)
     duration = datetime.timedelta(seconds=random.randrange(*STRANGLERANGE))
@@ -248,23 +271,29 @@ async def strangle(ctx):
     await victim.timeout(duration, reason=f'strangled on behalf of {instigator.mention}')
     await instigator.timeout(instigatorduration, reason=f'wanted to strangle')
     await send(ctx, f"strangled you and {victim.mention}")
-    print(victim.display_name, duration, instigatorduration, end="")
+    await log(ctx, victim.display_name, duration, instigatorduration)
 
 
+@cooldown
 @bot.command(name='cat', hidden=True)
 async def cat(ctx):
     instigator = ctx.message.author
+    if ctx.message.content.endswith(" curse"):
+        catspam[instigator.id] = CATMAX * 2
+        await send(ctx, "you have been imbued with cat juice...")
+        await log(ctx, "limit forced")
+        return
     spamcnt = catspam.get(instigator.id, 0) + 1
-    quotient = spamcnt // 5
+    quotient = spamcnt // 2
     if quotient >= CATMAX:
         await send(ctx, "im all out of cat juice...")
-        print("limit reached", end="")
+        await log(ctx, "limit reached")
         return
     catspam[instigator.id] = spamcnt
-    if spamcnt % 5 == 0:
+    if spamcnt % 2 == 0:
         await send(ctx, CATQUOTES[quotient])
     await send(ctx, file=discord.File("cat/" + (attachment := random.choice(os.listdir('cat')))))
-    print(spamcnt, attachment, end="")
+    await log(ctx, spamcnt, attachment)
 
 
 bot.run(TOKEN)
