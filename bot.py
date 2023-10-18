@@ -23,10 +23,13 @@ with open('kill.txt', 'r') as file:
 with open('cat.txt', 'r') as file:
     CATQUOTES = tuple(file.readlines())
 DISCORDBG = (49, 51, 56)
-STRANGLERANGE = (5, 300)
+STRANGLERANGE = (5, 600)
 STRANGLEMULT = 3
 STRANGLEMAX = 10
-CATMAX = len(CATQUOTES) - 1
+CATINTERVAL = 3
+CATMAX = len(CATQUOTES) * CATINTERVAL
+CATREGSPACE = 1
+CATLOSERSPACE = 3
 stranglespam = {}
 currmonth = -1
 catspam = {}
@@ -70,11 +73,12 @@ def surfsequal(surf1: Surface, surf2: Surface):
 
 
 async def send(ctx, *args, **kwargs):
-    if catspam.get(ctx.message.author.id, 0) // 2 >= CATMAX:
+    if kwargs.pop('forcecat', False) or \
+            (not kwargs.pop('nocat', False) and catspam.get(ctx.message.author.id, 0) > CATMAX):
         item = discord.File("cat/" + random.choice(os.listdir('cat')))
         additions = [item]
         if kwargs.get('file', None):
-            additions.insert(kwargs.pop('file'), 0)
+            additions.insert(0, kwargs.pop('file'))
         kwargs['files'] = kwargs.get('files', []) + additions
 
     await ctx.channel.send(*args, **kwargs)
@@ -82,25 +86,23 @@ async def send(ctx, *args, **kwargs):
 
 async def log(ctx, *extra):
     message = ctx.message
+    nl = "\n"
     print(f"{str(datetime.datetime.now()): <40}{message.guild.get_member(message.author.id).display_name: <30}"
-          f"{message.guild.name: <30}{message.content: <80}", end="")
+          f"{message.guild.name: <30}{message.content.replace(nl, ' '): <80}", end="")
     print(*extra)
 
 
-def shared_cooldown(rate, per, cooltype=commands.BucketType.default):
+def catcooldown(rate, per, specrate, specper, cooltype=commands.BucketType.default):
     cd = commands.Cooldown(rate, per)
+    cdspec = commands.Cooldown(specrate, specper)
 
-    def decorator(func):
-        if isinstance(func, commands.Command):
-            func._buckets = commands.CooldownMapping(cd, cooltype)
-        else:
-            func.__commands_cooldown__ = cd
-        return func
+    def determine(ctx):
+        return cdspec if catspam.get(ctx.message.author.id, 0) > CATMAX else cd
 
-    return decorator
+    return commands.dynamic_cooldown(determine, cooltype)
 
 
-cooldown = shared_cooldown(1, 1, commands.BucketType.user)
+cooldown = catcooldown(1, 1, 1, 600, commands.BucketType.user)
 
 
 @bot.event
@@ -143,6 +145,7 @@ async def start(ctx):
 @bot.command(name='live', help='checks for vitals')
 async def live(ctx):
     await send(ctx, "iphone venezuela bottom texxt 100 billion dead")
+    await log(ctx)
 
 
 @cooldown
@@ -249,7 +252,7 @@ async def strangle(ctx):
     # await send(ctx, len([s for s in ctx.message.guild.members
     #                             if ctx.message.guild.me.top_role > s.top_role]))
     if str(ctx.message.guild.id) in losers:
-        await send(ctx, "mods wont let me (1984 anyone?)")
+        await send(ctx, "mods won't let me (1984 anyone?)")
         await log(ctx, "command censored")
         return
     me = ctx.message.guild.me
@@ -266,7 +269,7 @@ async def strangle(ctx):
         return
     victim = random.choice(victimchoices)
     duration = datetime.timedelta(seconds=random.randrange(*STRANGLERANGE))
-    instigatorduration = (duration * STRANGLEMULT ** stranglespam[instigator.id] *
+    instigatorduration = (duration * STRANGLEMULT ** (stranglespam[instigator.id] - 1) *
                           (int(stranglespam.get(instigator.id, 0) > STRANGLEMAX) + 1))
     await victim.timeout(duration, reason=f'strangled on behalf of {instigator.mention}')
     await instigator.timeout(instigatorduration, reason=f'wanted to strangle')
@@ -278,21 +281,23 @@ async def strangle(ctx):
 @bot.command(name='cat', hidden=True)
 async def cat(ctx):
     instigator = ctx.message.author
-    if ctx.message.content.endswith(" curse"):
-        catspam[instigator.id] = CATMAX * 2
-        await send(ctx, "you have been imbued with cat juice...")
-        await log(ctx, "limit forced")
-        return
-    spamcnt = catspam.get(instigator.id, 0) + 1
-    quotient = spamcnt // 2
-    if quotient >= CATMAX:
-        await send(ctx, "im all out of cat juice...")
+    space = CATREGSPACE if str(ctx.message.guild.id) not in losers else CATLOSERSPACE
+    spamcnt = catspam.get(instigator.id, 0) + space
+    quotient = spamcnt // CATINTERVAL
+    if spamcnt > CATMAX:
+        await send(ctx, "i'm all out of cat juice...", nocat=True)
         await log(ctx, "limit reached")
         return
+    if ctx.message.content.endswith(" curse"):
+        catspam[instigator.id] = CATMAX + 1
+        await send(ctx, "you have been imbued with cat juice...", nocat=True)
+        await log(ctx, "limit forced")
+        return
     catspam[instigator.id] = spamcnt
-    if spamcnt % 2 == 0:
-        await send(ctx, CATQUOTES[quotient])
-    await send(ctx, file=discord.File("cat/" + (attachment := random.choice(os.listdir('cat')))))
+    args = []
+    if spamcnt % CATINTERVAL == 0:
+        args.append(CATQUOTES[quotient - 1])
+    await send(ctx, *args, file=discord.File("cat/" + (attachment := random.choice(os.listdir('cat')))))
     await log(ctx, spamcnt, attachment)
 
 
