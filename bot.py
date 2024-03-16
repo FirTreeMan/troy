@@ -4,11 +4,13 @@ import requests
 from dotenv import load_dotenv
 from discord.ext import commands
 from pygame import Surface, display, image, Rect, font, FONT_LEFT, FONT_RIGHT, FONT_CENTER
+import gamble as g
 import datetime
 import io
 import os
 import random
 import pickle
+
 
 font.init()
 display.init()
@@ -27,11 +29,12 @@ DISCORDBG = (49, 51, 56)
 STRANGLERANGE = (5, 600)
 STRANGLEMULT = 3
 STRANGLEMAX = 10
-CATINTERVAL = 9
+CATINTERVAL = 2
 CATMAX = len(CATQUOTES) * CATINTERVAL
 CATREGSPACE = 1
-CATLOSERSPACE = 3
+CATLOSERSPACE = 2
 CATNAMES = tuple(os.listdir("cat"))
+# delete cat.pkl when updating cat folder
 if not os.path.isfile("cat.pkl"):
     CATSEARCHTERMS = {frozenset(tag for tag in value.replace(", ", ".").split(".")): index
                       for index, value in enumerate(CATNAMES)}
@@ -40,12 +43,35 @@ if not os.path.isfile("cat.pkl"):
 else:
     with open("cat.pkl", 'rb') as file:
         CATSEARCHTERMS = pickle.load(file)
+STARTPTS = 50
+ITEMCOSTS = {
+    'killblock': 50,
+    'strangleblock': 50,
+    'strangle reset': 500,
+    'cat reset': 500,
+}
+ITEMDESCS = {
+    'killblock': 'cant be killed for a day',
+    'strangleblock': 'cant be strangled for a day',
+    'strangle reset': 'resets strangle buildup',
+    'cat reset': 'resets curse buildup',
+}
 stranglespam = {}
 currmonth = -1
 catspam = {}
+points = {}
+lobbies: list[g.Lobby] = []
+usrlobbies = {}
+items = {}
 open('losers.txt', 'a+').close()
 with open('losers.txt', 'r') as file:
     losers = [s.rstrip('\n') for s in file.readlines()]
+if os.path.isfile("points.pkl"):
+    with open("points.pkl", 'rb') as file:
+        points = pickle.load(file)
+if os.path.isfile("items.pkl"):
+    with open("items.pkl", 'rb') as file:
+        items = pickle.load(file)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -82,26 +108,69 @@ def surfsequal(surf1: Surface, surf2: Surface):
     return True
 
 
-def searchweights(tags: set[str], terms: tuple[str]):
+async def searchweights(tags: set[str] | frozenset[str], terms: tuple[str], negterms: tuple[str]):
     tags = {tuple(s.split()) if isinstance(s, str) else s for s in tags}
     termset = set(terms)
+    negtermset = set(negterms) if negterms else set()
     weight = 0
     checkedtitle = False
     for tag in tags:
         if not checkedtitle and tag[-1] == "!":
             if tag[:-1] == terms:
-                print('TITLE FOUND')
                 return 999
+            if tag[:-1] == negterms:
+                return -999
             checkedtitle = True
             continue
         tagset = set(tag)
         intersections = tagset & termset
-        weight += len(intersections)
+        negintersections = tagset & negtermset
+        weight += len(intersections) - len(negintersections)
         if len(intersections) == len(tagset) > 1 and tag == terms:
             weight += len(tagset) * 0.1
         elif intersections:
             weight -= len(tagset) * 0.1
+        if len(negintersections) == len(tagset) > 1 and tag == negterms:
+            weight -= len(tagset) * 0.1
+        elif negintersections:
+            weight += len(tagset) * 0.1
     return weight
+
+
+async def findlobby(ctx, user, game, solo=False, prebet=None):
+    if lobby := usrlobbies.get(user.id, None):
+        await lobby.removeplayer(user.id)
+        usrlobbies.pop(user.id)
+    if not solo:
+        for ident, lobby in enumerate(lobbies):
+            if lobby.gametype == game and len(lobby.players) <= g.Lobby.MAXPLAYERS and not lobby.ingame:
+                await lobby.addplayer(user.id)
+                usrlobbies[user.id] = lobby
+                await send(ctx, f"joined lobby {ident}",
+                           log=lobby)
+                if prebet is not None:
+                    await lobby.addmove(user.id, str(prebet))
+                    await send(ctx, f"placed bet")
+                return ident
+    lobbies.append(g.Lobby(ctx, game, len(lobbies), {user.id}))
+    usrlobbies[user.id] = lobbies[-1]
+    if solo:
+        await send(ctx, f"joined solo lobby {len(lobbies) - 1}",
+                   log=f"{len(lobbies) - 1} solo")
+        await send(ctx, await lobbies[-1].readyplayer(user.id),
+                   nolog=True)
+
+    return len(lobbies) - 1
+
+
+async def pointdump():
+    with open("points.pkl", 'wb') as _file:
+        pickle.dump(points, _file, 5)
+
+
+async def itemdump():
+    with open("items.pkl", 'wb') as _file:
+        pickle.dump(items, _file, 5)
 
 
 async def send(ctx, *args, **kwargs):
@@ -113,16 +182,19 @@ async def send(ctx, *args, **kwargs):
             additions.insert(0, kwargs.pop('file'))
         kwargs['files'] = kwargs.get('files', []) + additions
     logdata = [logs] if not isinstance(logs := kwargs.pop('log', ''), list) else logs
+    nolog = kwargs.pop('nolog', False)
 
     await ctx.channel.send(*args, **kwargs)
-    await log(ctx, *logdata)
+    if not nolog:
+        await log(ctx, *logdata)
 
 
 async def log(ctx, *extra):
     message = ctx.message
     nl = "\n"
-    print(f"{str(datetime.datetime.now()): <40}{message.guild.get_member(message.author.id).display_name: <30}"
-          f"{message.guild.name: <30}{message.content.replace(nl, ' '): <80}", end='')
+    print(f"{str(datetime.datetime.now()): <40}{message.author.display_name: <30}"
+          f"{(message.guild.name if message.guild is not None else 'DM'): <30}{message.content.replace(nl, ' '): <80}",
+          end='')
     print(*extra)
 
 
@@ -136,7 +208,7 @@ def catcooldown(rate, per, specrate, specper, cooltype=commands.BucketType.defau
     return commands.dynamic_cooldown(determine, cooltype)
 
 
-cooldown = catcooldown(1, 1, 1, 60, commands.BucketType.user)
+cooldown = catcooldown(1, 1, 1, 10, commands.BucketType.user)
 
 
 @bot.event
@@ -149,18 +221,42 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    if not message.attachments or message.author.id == message.guild.me.id:
-        await bot.process_commands(message)
-        return
-    baseimg = image.load('cleantroy.png')
-    for url in [s.url for s in message.attachments if s.content_type.startswith("image")]:
-        img = image.load(io.BytesIO(requests.get(url).content), namehint='')
-        if (size := img.get_size()) == baseimg.get_size() and \
-                surfsequal(img.subsurface(0, 200, size[0], size[1] - 200),
-                           baseimg.subsurface(0, 200, size[0], size[1] - 200)):
-            await message.channel.send("hey thats me")
-            await bot.process_commands(message)
-            return
+    global points
+
+    if message.author.id != bot.application_id:
+        if message.attachments:
+            baseimg = image.load('cleantroy.png')
+            for url in [s.url for s in message.attachments if s.content_type.startswith("image")]:
+                img = image.load(io.BytesIO(requests.get(url).content), namehint='')
+                if (size := img.get_size()) == baseimg.get_size() and \
+                        surfsequal(img.subsurface(0, 200, size[0], size[1] - 200),
+                                   baseimg.subsurface(0, 200, size[0], size[1] - 200)):
+                    await message.channel.send("hey thats me")
+                    await bot.process_commands(message)
+                    return
+        if (cheat := isinstance(message.channel, discord.DMChannel)) or \
+                ((usrlobby := usrlobbies.get(message.author.id, None)) and
+                 message.channel is usrlobby.ctx.message.channel):
+            if (lobby := usrlobbies.get(message.author.id, None)) and lobby.game:
+                if not lobby.ingame and await lobby.validmove(message.author.id, message.content):
+                    betamt = int(message.content)
+                    if betamt <= (userpoints := points.get(message.author.id, STARTPTS)):
+                        points[message.author.id] = userpoints - betamt
+                        await pointdump()
+                        await send(await bot.get_context(message), "placed bet",
+                                   log='|'.join([str(betamt), str(userpoints)]))
+                    else:
+                        await send(await bot.get_context(message), "yorue too poor !",
+                                   log='|'.join([str(betamt), str(userpoints)]))
+                if await lobby.addmove(message.author.id, message.content, cheat):
+                    await send(lobby.ctx, await lobby.run(),
+                               log=lobby)
+                    points[message.author.id] += lobby.result.get('playerwinnings', {}).get(message.author.id, 0)
+                    await pointdump()
+                for user in lobby.private.keys():
+                    await (await bot.fetch_user(user)).send(lobby.private[user])
+                lobby.private.clear()
+
     await bot.process_commands(message)
 
 
@@ -215,8 +311,13 @@ async def stop(ctx):
 async def kill(ctx, user: discord.User = None):
     if user and user.id in (698596771059728455, 1127648163747086407):
         await send(ctx, "no thanks sweaty",
-                   log="invalid victim")
+                   log="innocent victim")
         return
+    if user and (item := items.get(user.id, {}).get('killblock', None)):
+        if item and item.date() >= datetime.datetime.now().date():
+            await send(ctx, "he bought safety",
+                       log="safe victim")
+            return
 
     member = ctx.message.guild.get_member(user.id) if user else ctx.message.guild.get_member(int(ctx.message.author.id))
 
@@ -224,13 +325,13 @@ async def kill(ctx, user: discord.User = None):
     text = quote.replace("\\n", "\n")
     textbox = font.Font(KFONT, 48).render(text + "\n", antialias=True, color=(255, 255, 255), bgcolor=DISCORDBG,
                                           wraplength=2490)
-    pfpbase = pygame.transform.scale(image.load(io.BytesIO(requests.get(member.avatar.with_size(512)).content),
+    pfpbase = pygame.transform.scale(image.load(io.BytesIO(requests.get(member.display_avatar.with_size(512)).content),
                                                 namehint=''), (120, 120))
     pfp = Surface(pfpbase.get_size(), pygame.SRCALPHA)
     pygame.draw.ellipse(pfp, (255, 255, 255, 255), (0, 0, *pfpbase.get_size()))
     pfp.blit(pfpbase, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
     name = member.display_name
-    rolecolor = member.color.to_rgb()
+    rolecolor = member.color.to_rgb() if member.color != discord.Color.default() else (255, 255, 255)
     namebox = font.Font(KFONT, 48).render(name, antialias=True, color=rolecolor, bgcolor=DISCORDBG,
                                           wraplength=2490)
     time = (f"{random.randint(1, 12):02}/{random.randint(1, 30):02}/{random.randint(2020, 2023):04} "
@@ -290,8 +391,8 @@ async def strangle(ctx):
         return
     me = ctx.message.guild.me
     instigator = ctx.message.author
-    victimchoices = [s for s in ctx.message.guild.members if ctx.message.guild.me.top_role > s.top_role]
-    stranglespam[instigator.id] = stranglespam.get(instigator.id, 0) + 1
+    victimchoices = [s for s in ctx.message.guild.members if ctx.message.guild.me.top_role > s.top_role and
+                     items.get(s.id, {}).get('strangleblock', datetime.date.min) < datetime.datetime.now().date()]
     if me.top_role <= instigator.top_role:
         await send(ctx, "you are too powerful... admin abuse...",
                    log="instigator has higher role")
@@ -302,24 +403,31 @@ async def strangle(ctx):
         return
     victim = random.choice(victimchoices)
     duration = datetime.timedelta(seconds=random.randrange(*STRANGLERANGE))
-    instigatorduration = (duration * STRANGLEMULT * (stranglespam[instigator.id] - 1) *
+    instigatorduration = (duration * STRANGLEMULT * (stranglespam.get(instigator.id, 0)) *
                           (int(stranglespam.get(instigator.id, 0) > STRANGLEMAX) + 1))
+    stranglespam[instigator.id] = stranglespam.get(instigator.id, 0) + 1
     await victim.timeout(duration, reason=f'strangled on behalf of {instigator.mention}')
     await instigator.timeout(instigatorduration, reason=f'wanted to strangle')
     await send(ctx, f"strangled you and {victim.mention}",
-               log='|'.join([victim.display_name, duration, instigatorduration]))
+               log='|'.join([victim.display_name, str(duration), str(instigatorduration)]))
 
 
 @cooldown
 @bot.command(name='cat', hidden=True)
 async def cat(ctx, *, search=''):
+    async def get_weight_dict(_searchterms, _negterms):
+        out = {}
+        for term in CATSEARCHTERMS.keys():
+            out[term] = await searchweights(term, _searchterms, _negterms)
+        return out
+
     instigator = ctx.message.author
     space = CATREGSPACE if str(ctx.message.guild.id) not in losers else CATLOSERSPACE
     spamcnt = catspam.get(instigator.id, 0) + space
     catspam[instigator.id] = spamcnt
     quotient = spamcnt // CATINTERVAL
     if spamcnt > CATMAX:
-        await send(ctx, "i'm all out of cat juice...", nocat=True,
+        await send(ctx, "im all out of cat juice...", nocat=True,
                    log="limit reached")
         return
     if search.startswith("curse"):
@@ -332,16 +440,147 @@ async def cat(ctx, *, search=''):
         args.append(CATQUOTES[quotient - 1])
     attachment = None
     if search:
-        searchterms = tuple(search.split())
-        results = sorted(CATSEARCHTERMS.keys(), key=lambda x: searchweights(x, searchterms), reverse=True)
-        heaviest = searchweights(results[0], searchterms)
-        results[:] = [s for s in results if searchweights(s, searchterms) >= heaviest]
+        searchterms, negterms = None, None
+        if '/' in search:
+            searchterms, negterms = [tuple(s.split()) for s in search.split('/')][:2]
+        else:
+            searchterms = tuple(search.split())
+
+        weightdict = await get_weight_dict(searchterms, negterms)
+        results = sorted(CATSEARCHTERMS.keys(), key=lambda x: weightdict[x], reverse=True)
+        heaviest = weightdict[results[0]]
+
+        for i, result in enumerate(results):
+            if weightdict[result] < heaviest:
+                results = results[:i]
+                break
+
         item = random.choice(results)
         attachment = CATNAMES[CATSEARCHTERMS[item]]
     if attachment is None:
         attachment = random.choice(CATNAMES)
     await send(ctx, *args, file=discord.File("cat/" + attachment), nocat=True,
                log='|'.join([str(spamcnt), search, attachment]))
+
+
+@cooldown
+@bot.command(name='gamble', help='dont run out of points')
+async def gamble(ctx, *, stuff=''):
+    user = ctx.message.author
+
+    stuff = stuff.split()
+    if not stuff:
+        await send(ctx, f"you have {points.get(ctx.message.author.id, STARTPTS)} gamblepoints",
+                   log="checked points")
+        return
+
+    if stuff[-1] == 'help':
+        text = '''
+        use one of these terms at the end to join a lobby with the respective game:
+        - blackjack (or 'b')
+        append 'solo' when joining a lobby to only play against the computer
+        append 'start' when in a lobby to start the game with all players
+        append 'leave' when in a lobby to leave the lobby
+        append 'callout' with the user you want to target
+        append 'gift' with the receiving user and the amount to send
+        after starting a game, dm the amount of gamblepoints you will bet for the game
+        every round, send the command you want to use in the appropriate channel
+        if you want to cheat, dm the cheat you want to use (with corresponding inputs)
+        '''
+        await send(ctx, text,
+                   log='help')
+        return
+    if stuff[-1] == 'start':
+        if lobby := usrlobbies.get(user.id, None):
+            await send(ctx, await lobby.readyplayer(user.id),
+                       log=lobby)
+            return
+    if stuff[-1] == 'leave':
+        if lobby := usrlobbies.pop(user.id, None):
+            await lobby.removeplayer(user.id)
+            await send(ctx, "left lobby",
+                       log=lobby)
+            return
+    if len(stuff) >= 2 and stuff[0] == 'callout' and (victim := stuff[1][2:-1]):
+        if (lobby := usrlobbies.get(victim, None)) and lobby is usrlobbies.get(user.id, None):
+            if amt := lobby.playercheats.get(victim, 0):
+                points[victim] = points.get(user.id, STARTPTS) + await lobby.catchcheater(user.id, victim, True)
+                await pointdump()
+                await send(ctx, f"{ctx.message.author} called out {stuff[1]} for cheating x{amt}",
+                           log="callout success")
+            else:
+                points[user.id] = points.get(user.id, STARTPTS) + await lobby.catchcheater(user.id, victim, False)
+                await pointdump()
+                await send(ctx, f"{ctx.message.author} thought he knew (actual loser)",
+                           log="callout failed")
+            return
+    if len(stuff) == 3 and stuff[0] == 'gift' and len(victim := stuff[1][2:-1]) == 18:
+        try:
+            if int(stuff[2]) > points.get(victim, STARTPTS):
+                return
+        except ValueError:
+            return
+        amt = int(stuff[2])
+        points[victim] = points.get(victim, STARTPTS) + amt
+        points[user.id] = points.get(user.id, STARTPTS) - amt
+        await pointdump()
+        await send(ctx, f"gifted {amt} to <@{victim}>",
+                   log='|'.join([user.id, victim, amt]))
+        return
+
+    solo = stuff[-1] == 'solo'
+    prebet = None
+    try:
+        solo = solo or (stuff[-2] == 'solo' and int(stuff[-1]))
+        prebet = int(stuff[-1])
+    except ValueError:
+        pass
+
+    if stuff[0] in ('blackjack', 'b'):
+        await findlobby(ctx, user, 'b', solo, prebet)
+    elif stuff[0] in ('roulette', 'r'):
+        await findlobby(ctx, user, 'r', solo, prebet)
+    # elif stuff[0] in ('poker', 'p'):
+    #     await findlobby(ctx, user, 'p', solo)
+    else:
+        await send(ctx, "type a real game duma",
+                   log="invalid game")
+        return
+
+
+@cooldown
+@bot.command(name='buy', help='get good')
+async def buy(ctx, *, item=''):
+    if not item:
+        text = '\n'.join([f"{k}: {ITEMDESCS[k]} ({v} gamblepoints)" for k, v in ITEMCOSTS])
+        await send(ctx, text)
+        await ctx.invoke(bot.get_command('gamble'))
+        return
+
+    if item in ITEMCOSTS.keys():
+        userpoints = points.get((user := ctx.message.author).id, STARTPTS)
+        if userpoints >= ITEMCOSTS[item]:
+            bought = None
+            if item == 'killblock':
+                time = datetime.datetime.now() + datetime.timedelta(days=1)
+                bought = time
+            elif item == 'strangleblock':
+                time = datetime.datetime.now() + datetime.timedelta(days=1)
+                bought = time
+            elif item == 'strangle reset':
+                stranglespam[user.id] = 0
+            elif item == 'cat reset':
+                catspam[user.id] = 0
+            points[user.id] = points.get(user.id, STARTPTS) - ITEMCOSTS[item]
+            await pointdump()
+            if bought is not None:
+                items[user.id][item] = bought
+                await itemdump()
+            await send(ctx, "you got it",
+                       log=f"{item}|{ITEMCOSTS[item]}/{userpoints}")
+        else:
+            await send(ctx, "too broke loser",
+                       log=f"{item}|{ITEMCOSTS[item]}/{userpoints}")
 
 
 bot.run(TOKEN)
