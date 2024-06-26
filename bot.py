@@ -11,6 +11,7 @@ import os
 import random
 import pickle
 
+
 font.init()
 display.init()
 load_dotenv()

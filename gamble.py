@@ -81,7 +81,9 @@ class Deck:
         random.shuffle(self.deck)
         self.pos = 0
 
-    def draw(self, reshuffle=False) -> Card:
+    def draw(self, amt=None, reshuffle=False) -> Card | list[Card]:
+        if amt is not None:
+            return [self.draw() for _ in range(amt)]
         card = self.deck[self.pos]
         self.pos += 1
         if reshuffle and self.pos >= len(self.deck):
@@ -128,9 +130,10 @@ class Game:
         }
 
     async def update(self, playermoves: dict[int, str]):
+        self.turns += 1
         return {
             "playercheats": {},
-            "private": {},
+            "private": self.private,
             "gameover": True,
         }
 
@@ -188,8 +191,8 @@ class Blackjack(Game):
     async def newgame(self, playerbets: dict[int, int]):
         if self.rounds % Blackjack.ROUNDSTOSHUFFLE == 0:
             self.deck.shuffle()
-        self.dealerhand = (self.deck.draw(), self.deck.draw())
-        self.playerhands = {s: [self.deck.draw(), self.deck.draw()] for s in self.players}
+        self.dealerhand = tuple(self.deck.draw(2))
+        self.playerhands = {s: self.deck.draw(2) for s in self.players}
         self.activeplayers = {s: True for s in self.players}
         self.private = {}
         return await super().newgame(playerbets) | {
@@ -231,9 +234,7 @@ class Blackjack(Game):
                                           (2.5 if await Blackjack.calchand(self.playerhands[player]) == 21 else 2)
             gameover = True
 
-        self.turns += 1
-
-        return {
+        return await super().update(playermoves) | {
             "continuing players": playercontinue,
             "dealer hand": [self.dealerhand[0],
                             (self.dealerhand[1] if gameover else Card('Unknown', 'Unknown'))],
@@ -241,7 +242,6 @@ class Blackjack(Game):
             "player winnings": {k: f"{v}/{self.playerbets[k]}" for k, v in playerwinnings.items()},
 
             "playercheats": self.playercheats,
-            "private": self.private,
             "gameover": gameover,
         }
 
@@ -388,12 +388,11 @@ class Roulette(Game):
                 if won:
                     playerwinnings[player] = self.playerbets[player] * (Roulette.PAYOUTS[choice] + 1)
 
-        return {
+        return await super().update(playermoves) | {
             "winning number": self.num,
             "player winnings": {k: f"{v}/{self.playerbets[k]}" for k, v in playerwinnings.items()},
 
             "playercheats": playercheats,
-            "gameover": True,
         }
 
     async def cheat(self, player, action) -> dict[int, str]:
@@ -415,11 +414,33 @@ class Roulette(Game):
         return super().validinput(inp, cheat)
 
 
+class Poker(Game):
+    MINBET = 5
+    MAXBET = 500
+    ACTIONS = ()
+    STARTACTIONS = ()
+    CHEATS = ('peek',)
+    DESC = ()
+
+    def __init__(self, lobby, players):
+        super().__init__(lobby, players)
+        self.playerhands = {}
+        self.dealerhand = ()
+
+    async def newgame(self, playerbets: dict[int, int]):
+        self.playerhands = {s: self.deck.draw(2) for s in self.players}
+        self.dealerhand = tuple(self.deck.draw(5))
+        return await super().newgame(playerbets) | {
+            "dealer hand": [*self.dealerhand[0:self.turns] + [Card('Unknown', 'Unknown')] * (5 - self.turns)],
+        }
+
+
 class Lobby:
     MAXPLAYERS = 8
     GAMES = {
         'b': Blackjack,
         'r': Roulette,
+        'p': Poker,
     }
 
     def __init__(self, ctx, gametype, ident=-1, players=None):
