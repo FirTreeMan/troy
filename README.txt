@@ -1,0 +1,1 @@
+delete 'cat.pkl' after modifying 'cat' folder
