@@ -25,6 +25,8 @@ with open('kill.txt', 'r') as file:
     KILLQUOTES = tuple(file.readlines())
 with open('cat.txt', 'r') as file:
     CATQUOTES = tuple(file.readlines())
+with open('ping.txt', 'r') as file:
+    PINGQUOTES = tuple(file.readlines())
 DISCORDBG = (49, 51, 56)
 STRANGLERANGE = (5, 600)
 STRANGLEMULT = 3
@@ -312,26 +314,30 @@ async def on_message(message):
                 for user in lobby.private.keys():
                     await (await bot.fetch_user(user)).send(lobby.private[user])
                 lobby.private.clear()
+        if bot.user in message.mentions:
+            await send(await bot.get_context(message),
+                       random.choice(PINGQUOTES).replace('<mention>', message.author.mention))
 
     await bot.process_commands(message)
 
 
 @bot.event
-async def on_reaction_add(reaction, user):
+async def on_raw_reaction_add(reaction):
     emoji = reaction.emoji
 
-    if user.bot:
+    if reaction.member.bot:
         return
 
-    if emoji == '👽':
+    if emoji.name == '👽':
         for messageid, groupname in groupmessages.items():
-            if messageid == reaction.message.id:
-                for group_ in groups[reaction.message.guild.id]:
+            if messageid == reaction.message_id:
+                for group_ in groups[reaction.guild_id]:
                     if group_.name == groupname:
-                        if user.id not in group_.members:
-                            group_.members.append(user.id)
+                        if reaction.member.id not in group_.members:
+                            group_.members.append(reaction.member.id)
                             await groupdump()
-                            await reaction.message.channel.send(f"{user.mention} joined group <{groupname}>")
+                            await (await reaction.member.create_dm()).send(
+                                f"{reaction.member.mention} joined group <{groupname}>")
                         return
 
 
@@ -488,7 +494,7 @@ async def strangle(ctx):
 
 
 @cooldown
-@bot.command(name='cat', hidden=True)
+@bot.command(name='cat', help='cat (append search terms if desired)')
 async def cat(ctx, *, search=''):
     async def get_weight_dict(_searchterms, _negterms):
         out = {}
@@ -662,7 +668,7 @@ async def buy(ctx, *, item=''):
 
 
 @cooldown
-@bot.command(name='group', help='make and join groups (commands are create, join, leave, ping)')
+@bot.command(name='group', help='make and join groups; subcommands are {create, join, leave, ping}')
 async def group(ctx, *, args=''):
     server = ctx.message.guild.id
     author = ctx.message.author.id
