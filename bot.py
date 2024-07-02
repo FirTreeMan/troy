@@ -402,6 +402,11 @@ async def kill(ctx, user: discord.User = None):
 
     member = ctx.message.guild.get_member(user.id) if user else ctx.message.guild.get_member(int(ctx.message.author.id))
 
+    if member.display_name.lower() in ['firtreeman', 'troybot']:
+        await send(ctx, "no thanks sweaty",
+                   log="innocent victim")
+        return
+
     quote = random.choice(KILLQUOTES)
     text = quote.replace("\\n", "\n")
     textbox = font.Font(KFONT, 48).render(text + "\n", antialias=True, color=(255, 255, 255), bgcolor=DISCORDBG,
