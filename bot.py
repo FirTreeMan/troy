@@ -316,7 +316,7 @@ async def on_message(message):
                 lobby.private.clear()
         if bot.user in message.mentions:
             await send(await bot.get_context(message),
-                       random.choice(PINGQUOTES).replace('<mention>', message.author.mention))
+                       random.choice(PINGQUOTES).replace('<mention>', message.author.mention).replace("\\n", "\n"))
 
     await bot.process_commands(message)
 
