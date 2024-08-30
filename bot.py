@@ -4,6 +4,8 @@ import requests
 from dotenv import load_dotenv
 from discord.ext import commands
 from pygame import Surface, display, image, Rect, font, FONT_LEFT, FONT_RIGHT, FONT_CENTER
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import wordnet as wn
 import gamble as g
 import datetime
 import io
@@ -11,12 +13,12 @@ import os
 import random
 import pickle
 
-
 font.init()
 display.init()
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD = os.getenv('DISCORD_GUILD')
+LEMMATIZER = WordNetLemmatizer()
 FONT = "Futura Condensed Extra Bold.otf"
 KFONT = "gg sans Medium.woff"
 with open('stop.txt', 'r') as file:
@@ -36,6 +38,16 @@ CATMAX = len(CATQUOTES) * CATINTERVAL
 CATREGSPACE = 1
 CATLOSERSPACE = 2
 CATNAMES = tuple(os.listdir("cat"))
+
+
+def lemmatize(word: str):
+    return LEMMATIZER.lemmatize(
+        LEMMATIZER.lemmatize(
+            LEMMATIZER.lemmatize(word),
+            wn.VERB),
+        wn.ADJ)
+
+
 # delete cat.pkl when updating cat folder
 if not os.path.isfile("cat.pkl"):
     CATSEARCHTERMS = {frozenset(tag for tag in value.replace(", ", ".").split(".")): index
@@ -45,6 +57,14 @@ if not os.path.isfile("cat.pkl"):
 else:
     with open("cat.pkl", 'rb') as file:
         CATSEARCHTERMS = pickle.load(file)
+if not os.path.isfile("catlem.pkl"):
+    CATLEMSEARCHTERMS = {frozenset({' '.join([lemmatize(word) for word in s.split()]) for s in tag}): index
+                         for tag, index in CATSEARCHTERMS.items()}
+    with open("catlem.pkl", 'wb') as file:
+        pickle.dump(CATLEMSEARCHTERMS, file, 5)
+else:
+    with open("catlem.pkl", 'rb') as file:
+        CATLEMSEARCHTERMS = pickle.load(file)
 
 STARTPTS = 50
 ITEMCOSTS = {
@@ -156,6 +176,32 @@ def surfsequal(surf1: Surface, surf2: Surface):
     return True
 
 
+async def precat(ctx, search):
+    instigator = ctx.message.author
+    space = CATREGSPACE if str(ctx.message.guild.id) not in losers else CATLOSERSPACE
+    spamcnt = catspam.get(instigator.id, 0) + space
+    catspam[instigator.id] = spamcnt
+    quotient = spamcnt // CATINTERVAL
+    if spamcnt > CATMAX and instigator.id not in catexceptions:
+        await send(ctx, "im all out of cat juice...", nocat=True,
+                   log="limit reached")
+        return False
+    if search.startswith("curse"):
+        catspam[instigator.id] = CATMAX
+        await send(ctx, "you have been imbued with cat juice...", nocat=True,
+                   log="limit forced")
+        return False
+
+    args = []
+    if spamcnt % CATINTERVAL == 0:
+        if instigator.id not in catexceptions:
+            args.append(CATQUOTES[quotient - 1])
+        else:
+            args.append(CATQUOTES[random.randrange(0, len(CATQUOTES))])
+
+    return args
+
+
 async def searchweights(tags: set[str] | frozenset[str], terms: tuple[str], negterms: tuple[str]):
     tags = {tuple(s.split()) if isinstance(s, str) else s for s in tags}
     termset = set(terms)
@@ -183,6 +229,28 @@ async def searchweights(tags: set[str] | frozenset[str], terms: tuple[str], negt
         elif negintersections:
             weight += len(tagset) * 0.1
     return weight
+
+
+async def getcat(searchterms: dict[frozenset[str], int], posterms: tuple[str], negterms: tuple[str]) -> str:
+    async def get_weight_dict(_posterms, _negterms):
+        out = {}
+        for term in searchterms.keys():
+            out[term] = await searchweights(term, _posterms, _negterms)
+        return out
+
+    weightdict = await get_weight_dict(posterms, negterms)
+    results = sorted(searchterms.keys(), key=lambda x: weightdict[x], reverse=True)
+    heaviest = weightdict[results[0]]
+
+    for i, result in enumerate(results):
+        if weightdict[result] < heaviest:
+            results = results[:i]
+            break
+
+    item = random.choice(results)
+    attachment = CATNAMES[searchterms[item]]
+
+    return attachment
 
 
 async def findlobby(ctx, user, game, solo=False, prebet=None):
@@ -501,32 +569,10 @@ async def strangle(ctx):
 @cooldown
 @bot.command(name='cat', help='cat (append search terms if desired)')
 async def cat(ctx, *, search=''):
-    async def get_weight_dict(_searchterms, _negterms):
-        out = {}
-        for term in CATSEARCHTERMS.keys():
-            out[term] = await searchweights(term, _searchterms, _negterms)
-        return out
+    args = await precat(ctx, search)
+    if isinstance(args, bool):
+        return
 
-    instigator = ctx.message.author
-    space = CATREGSPACE if str(ctx.message.guild.id) not in losers else CATLOSERSPACE
-    spamcnt = catspam.get(instigator.id, 0) + space
-    catspam[instigator.id] = spamcnt
-    quotient = spamcnt // CATINTERVAL
-    if spamcnt > CATMAX and instigator.id not in catexceptions:
-        await send(ctx, "im all out of cat juice...", nocat=True,
-                   log="limit reached")
-        return
-    if search.startswith("curse"):
-        catspam[instigator.id] = CATMAX
-        await send(ctx, "you have been imbued with cat juice...", nocat=True,
-                   log="limit forced")
-        return
-    args = []
-    if spamcnt % CATINTERVAL == 0:
-        if instigator.id not in catexceptions:
-            args.append(CATQUOTES[quotient - 1])
-        else:
-            args.append(CATQUOTES[random.randrange(0, len(CATQUOTES))])
     attachment = None
     if search:
         searchterms, negterms = None, None
@@ -535,21 +581,34 @@ async def cat(ctx, *, search=''):
         else:
             searchterms = tuple(search.split())
 
-        weightdict = await get_weight_dict(searchterms, negterms)
-        results = sorted(CATSEARCHTERMS.keys(), key=lambda x: weightdict[x], reverse=True)
-        heaviest = weightdict[results[0]]
-
-        for i, result in enumerate(results):
-            if weightdict[result] < heaviest:
-                results = results[:i]
-                break
-
-        item = random.choice(results)
-        attachment = CATNAMES[CATSEARCHTERMS[item]]
+        attachment = await getcat(CATSEARCHTERMS, searchterms, negterms)
     if attachment is None:
         attachment = random.choice(CATNAMES)
     await send(ctx, *args, file=discord.File("cat/" + attachment), nocat=True,
-               log='|'.join([str(spamcnt), search, attachment]))
+               log='|'.join([search, attachment]))
+
+
+@cooldown
+@bot.command(name='catlem', help='cat with lemmatization')
+async def catlem(ctx, *, search=''):
+    args = await precat(ctx, search)
+    if isinstance(args, bool):
+        return
+
+    attachment = None
+    if search:
+        searchterms, negterms = None, None
+        if '/' in search:
+            searchterms, negterms = [tuple([lemmatize(word) for word in s.split()])
+                                     for s in search.split('/')][:2]
+        else:
+            searchterms = tuple([lemmatize(word) for word in search.split()])
+
+        attachment = await getcat(CATLEMSEARCHTERMS, searchterms, negterms)
+    if attachment is None:
+        attachment = random.choice(CATNAMES)
+    await send(ctx, *args, file=discord.File("cat/" + attachment), nocat=True,
+               log='|'.join([search, attachment]))
 
 
 @cooldown
